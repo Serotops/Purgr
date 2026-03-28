@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "purgr",
+  "productName": "Purgr",
   "version": "0.1.0",
   "identifier": "com.purgr.app",
   "build": {
@@ -12,9 +12,13 @@
   "app": {
     "windows": [
       {
-        "title": "purgr",
-        "width": 800,
-        "height": 600
+        "title": "Purgr",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 800,
+        "minHeight": 500,
+        "decorations": true,
+        "center": true
       }
     ],
     "security": {
