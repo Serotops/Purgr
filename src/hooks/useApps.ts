@@ -45,24 +45,41 @@ export function useApps() {
 
   const uninstallApp = useCallback(async (app: InstalledApp) => {
     const key = app.registry_key;
+    const isProtocol = app.uninstall_string.includes("://");
     try {
       // Phase 1: Running the uninstaller
-      setAction(key, { registryKey: key, status: "uninstalling", message: "Uninstaller is running..." });
+      setAction(key, {
+        registryKey: key,
+        status: "uninstalling",
+        message: isProtocol
+          ? "Waiting for external uninstaller..."
+          : "Uninstaller is running...",
+      });
 
       const uninstallCmd = app.quiet_uninstall_string || app.uninstall_string;
       await invoke<string>("uninstall_app", { uninstallString: uninstallCmd });
 
-      // Phase 2: Poll registry to verify removal (uninstaller may still be finishing)
-      setAction(key, { registryKey: key, status: "verifying", message: "Verifying removal..." });
+      // Phase 2: Poll registry to verify removal
+      // Protocol-based uninstallers (Steam, Epic, etc.) are async — poll longer
+      setAction(key, { registryKey: key, status: "verifying", message: "Waiting for uninstall to complete..." });
+
+      const maxAttempts = isProtocol ? 30 : 8;
+      const interval = isProtocol ? 3000 : 2000;
 
       let removed = false;
-      for (let attempt = 0; attempt < 6; attempt++) {
-        // Wait a bit before checking — give the uninstaller time to clean up
-        await new Promise((r) => setTimeout(r, attempt === 0 ? 1000 : 2000));
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        await new Promise((r) => setTimeout(r, attempt === 0 ? 1500 : interval));
         const stillExists = await invoke<boolean>("check_app_installed", { registryKey: key });
         if (!stillExists) {
           removed = true;
           break;
+        }
+        if (isProtocol) {
+          setAction(key, {
+            registryKey: key,
+            status: "verifying",
+            message: `Waiting for external uninstaller... (${attempt + 1}/${maxAttempts})`,
+          });
         }
       }
 
@@ -71,8 +88,8 @@ export function useApps() {
         setApps((prev) => prev.filter((a) => a.registry_key !== key));
         setTimeout(() => setAction(key, null), 2000);
       } else {
-        // App still in registry — rescan to update orphan status
-        setAction(key, { registryKey: key, status: "done", message: "Uninstaller finished — app may need manual cleanup" });
+        // Rescan — the app might now be orphaned even if not fully removed
+        setAction(key, { registryKey: key, status: "done", message: "Uninstaller finished — refreshing list..." });
         await scan();
         setTimeout(() => setAction(key, null), 3000);
       }

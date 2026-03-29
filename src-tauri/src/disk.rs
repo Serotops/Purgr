@@ -31,7 +31,10 @@ pub struct DirEntry {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn to_wide(s: &str) -> Vec<u16> {
-    OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    OsStr::new(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 fn wide_to_string(buf: &[u16]) -> String {
@@ -131,7 +134,8 @@ fn list_dir_fast(path: &Path) -> Vec<RawEntry> {
     let search = format!("{}\\*", path.to_string_lossy());
     let wide = to_wide(&search);
 
-    let mut fd: windows_sys::Win32::Storage::FileSystem::WIN32_FIND_DATAW = unsafe { std::mem::zeroed() };
+    let mut fd: windows_sys::Win32::Storage::FileSystem::WIN32_FIND_DATAW =
+        unsafe { std::mem::zeroed() };
 
     let handle = unsafe {
         windows_sys::Win32::Storage::FileSystem::FindFirstFileExW(
@@ -191,7 +195,10 @@ fn fast_dir_size(path: &Path) -> (u64, u64) {
 
 /// Scan a directory using FindFirstFileExW + rayon.
 /// `max_depth` controls how deep we build the tree; beyond that we just compute sizes.
-pub fn scan_fast(path: &str, max_depth: u32) -> Result<DirEntry, Box<dyn std::error::Error + Send + Sync>> {
+pub fn scan_fast(
+    path: &str,
+    max_depth: u32,
+) -> Result<DirEntry, Box<dyn std::error::Error + Send + Sync>> {
     scan_fast_with_progress(path, max_depth, |_, _| {})
 }
 
@@ -204,7 +211,8 @@ pub fn scan_fast_with_progress(
     if !p.exists() {
         return Err(format!("Path does not exist: {}", path).into());
     }
-    let name = p.file_name()
+    let name = p
+        .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string());
 
@@ -213,16 +221,14 @@ pub fn scan_fast_with_progress(
     let total_dirs = items.iter().filter(|i| i.is_dir).count();
     let completed = std::sync::atomic::AtomicUsize::new(0);
 
-    let mut files_size = 0u64;
-    let mut files_count = 0u64;
+    let mut files: Vec<RawEntry> = Vec::new();
     let mut dirs: Vec<RawEntry> = Vec::new();
 
     for item in items {
         if item.is_dir {
             dirs.push(item);
         } else {
-            files_size += item.size;
-            files_count += 1;
+            files.push(item);
         }
     }
 
@@ -241,14 +247,15 @@ pub fn scan_fast_with_progress(
         })
         .collect();
 
-    if files_size > 0 {
+    // Add individual file entries
+    for file in files {
         children.push(DirEntry {
-            name: format!("<files> ({} files)", files_count),
-            path: p.to_string_lossy().to_string(),
-            size: files_size,
+            name: file.name.clone(),
+            path: p.join(&file.name).to_string_lossy().to_string(),
+            size: file.size,
             is_dir: false,
             children: Vec::new(),
-            file_count: files_count,
+            file_count: 1,
             dir_count: 0,
         });
     }
@@ -273,18 +280,17 @@ pub fn scan_fast_with_progress(
 fn scan_fast_recursive(path: &Path, name: &str, depth: u32) -> DirEntry {
     let items = list_dir_fast(path);
 
-    let mut files_size = 0u64;
-    let mut files_count = 0u64;
+    let mut files: Vec<RawEntry> = Vec::new();
     let mut dirs: Vec<RawEntry> = Vec::new();
 
     for item in items {
         if item.is_dir {
             dirs.push(item);
         } else {
-            files_size += item.size;
-            files_count += 1;
+            files.push(item);
         }
     }
+
 
     // Scan subdirectories — in parallel at depth 0 and 1, sequential deeper
     let mut children: Vec<DirEntry> = if depth > 0 {
@@ -342,15 +348,15 @@ fn scan_fast_recursive(path: &Path, name: &str, depth: u32) -> DirEntry {
         }
     };
 
-    // Add synthetic <files> entry
-    if files_size > 0 {
+    // Add individual file entries
+    for file in files {
         children.push(DirEntry {
-            name: format!("<files> ({} files)", files_count),
-            path: path.to_string_lossy().to_string(),
-            size: files_size,
+            name: file.name.clone(),
+            path: path.join(&file.name).to_string_lossy().to_string(),
+            size: file.size,
             is_dir: false,
             children: Vec::new(),
-            file_count: files_count,
+            file_count: 1,
             dir_count: 0,
         });
     }
@@ -378,7 +384,8 @@ pub fn scan_shallow(path: &str) -> Result<DirEntry, Box<dyn std::error::Error + 
     if !p.exists() {
         return Err(format!("Path does not exist: {}", path).into());
     }
-    let name = p.file_name()
+    let name = p
+        .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string());
 
@@ -513,13 +520,17 @@ pub fn scan_mft(
         )
     };
     if ok == 0 {
-        unsafe { CloseHandle(handle); }
+        unsafe {
+            CloseHandle(handle);
+        }
         return Err("Failed to read NTFS volume data — not an NTFS volume?".into());
     }
 
     let record_size = vol_data.BytesPerFileRecordSegment as usize;
     if record_size == 0 || record_size > 65536 {
-        unsafe { CloseHandle(handle); }
+        unsafe {
+            CloseHandle(handle);
+        }
         return Err(format!("Invalid MFT record size: {}", record_size).into());
     }
 
@@ -578,11 +589,16 @@ pub fn scan_mft(
         if pct > last_pct + 1 {
             last_pct = pct;
             let phase_pct = (pct as f64) * 0.8; // MFT read = 0-80%
-            on_progress(phase_pct, &format!("Reading MFT... {}% ({} records)", pct, record_num));
+            on_progress(
+                phase_pct,
+                &format!("Reading MFT... {}% ({} records)", pct, record_num),
+            );
         }
     }
 
-    unsafe { CloseHandle(handle); }
+    unsafe {
+        CloseHandle(handle);
+    }
 
     on_progress(80.0, "Building directory tree...");
 
@@ -623,12 +639,22 @@ fn parse_mft_record(record: &mut [u8], _record_num: u64) -> Option<MftFileEntry>
 
     let mut off = attr_offset;
     while off + 8 < record.len() {
-        let attr_type = u32::from_le_bytes([record[off], record[off + 1], record[off + 2], record[off + 3]]);
+        let attr_type = u32::from_le_bytes([
+            record[off],
+            record[off + 1],
+            record[off + 2],
+            record[off + 3],
+        ]);
         if attr_type == 0xFFFFFFFF {
             break;
         }
 
-        let attr_len = u32::from_le_bytes([record[off + 4], record[off + 5], record[off + 6], record[off + 7]]) as usize;
+        let attr_len = u32::from_le_bytes([
+            record[off + 4],
+            record[off + 5],
+            record[off + 6],
+            record[off + 7],
+        ]) as usize;
         if attr_len == 0 || off + attr_len > record.len() {
             break;
         }
@@ -639,7 +665,8 @@ fn parse_mft_record(record: &mut [u8], _record_num: u64) -> Option<MftFileEntry>
                 if off + 24 < record.len() {
                     let non_res = record[off + 8];
                     if non_res == 0 {
-                        let content_off_val = u16::from_le_bytes([record[off + 20], record[off + 21]]) as usize;
+                        let content_off_val =
+                            u16::from_le_bytes([record[off + 20], record[off + 21]]) as usize;
                         let content_start = off + content_off_val;
 
                         if content_start + 0x42 < record.len() {
@@ -647,8 +674,8 @@ fn parse_mft_record(record: &mut [u8], _record_num: u64) -> Option<MftFileEntry>
 
                             // Parent reference (lower 6 bytes)
                             let pr = u64::from_le_bytes([
-                                fn_data[0], fn_data[1], fn_data[2], fn_data[3],
-                                fn_data[4], fn_data[5], 0, 0,
+                                fn_data[0], fn_data[1], fn_data[2], fn_data[3], fn_data[4],
+                                fn_data[5], 0, 0,
                             ]);
 
                             let name_len = fn_data[0x40] as usize;
@@ -665,7 +692,10 @@ fn parse_mft_record(record: &mut [u8], _record_num: u64) -> Option<MftFileEntry>
                                     let name = String::from_utf16_lossy(&name_u16);
 
                                     // Pick the best name (Win32 > Win32+DOS > POSIX)
-                                    if namespace == 1 || (namespace == 3 && best_ns != 1) || best_name.is_empty() {
+                                    if namespace == 1
+                                        || (namespace == 3 && best_ns != 1)
+                                        || best_name.is_empty()
+                                    {
                                         best_name = name;
                                         best_ns = namespace;
                                         parent_ref = pr;
@@ -684,8 +714,14 @@ fn parse_mft_record(record: &mut [u8], _record_num: u64) -> Option<MftFileEntry>
                         // Non-resident: real size at attribute offset 48
                         if off + 56 <= record.len() {
                             data_size = u64::from_le_bytes([
-                                record[off + 48], record[off + 49], record[off + 50], record[off + 51],
-                                record[off + 52], record[off + 53], record[off + 54], record[off + 55],
+                                record[off + 48],
+                                record[off + 49],
+                                record[off + 50],
+                                record[off + 51],
+                                record[off + 52],
+                                record[off + 53],
+                                record[off + 54],
+                                record[off + 55],
                             ]);
                             found_data = true;
                         }
@@ -693,7 +729,10 @@ fn parse_mft_record(record: &mut [u8], _record_num: u64) -> Option<MftFileEntry>
                         // Resident: content length at attribute offset 16
                         if off + 20 <= record.len() {
                             data_size = u32::from_le_bytes([
-                                record[off + 16], record[off + 17], record[off + 18], record[off + 19],
+                                record[off + 16],
+                                record[off + 17],
+                                record[off + 18],
+                                record[off + 19],
                             ]) as u64;
                             found_data = true;
                         }
@@ -715,7 +754,13 @@ fn parse_mft_record(record: &mut [u8], _record_num: u64) -> Option<MftFileEntry>
         return None;
     }
 
-    let size = if is_directory { 0 } else if found_data { data_size } else { 0 };
+    let size = if is_directory {
+        0
+    } else if found_data {
+        data_size
+    } else {
+        0
+    };
 
     Some(MftFileEntry {
         parent_record: parent_ref,
@@ -765,7 +810,13 @@ fn build_tree_from_entries(
     }
 
     // Build tree from root (NTFS root directory = record 5)
-    let root = build_mft_node(5, &entries, &children_map, &format!("{}:\\", drive_letter), 4);
+    let root = build_mft_node(
+        5,
+        &entries,
+        &children_map,
+        &format!("{}:\\", drive_letter),
+        4,
+    );
 
     Ok(DirEntry {
         name: format!("{}:\\", drive_letter),
@@ -818,7 +869,13 @@ fn build_mft_node(
             if let Some(child_entry) = entries.get(&child_id) {
                 if child_entry.is_dir {
                     let child_node = if max_child_depth > 0 {
-                        build_mft_node(child_id, entries, children_map, &current_path, max_child_depth - 1)
+                        build_mft_node(
+                            child_id,
+                            entries,
+                            children_map,
+                            &current_path,
+                            max_child_depth - 1,
+                        )
                     } else {
                         // Just aggregate size without building deep tree
                         let (sz, fc, dc) = aggregate_mft_size(child_id, entries, children_map);

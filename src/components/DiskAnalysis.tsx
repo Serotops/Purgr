@@ -1,8 +1,16 @@
-import { useEffect } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { DirEntry, DriveInfo } from "@/types";
 import { useDiskScan } from "@/hooks/useDiskScan";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Treemap } from "@/components/Treemap";
 import {
   Loader2,
@@ -10,6 +18,7 @@ import {
   FolderOpen,
   File,
   ChevronRight,
+  Trash2,
 } from "lucide-react";
 
 function formatBytes(bytes: number): string {
@@ -24,6 +33,69 @@ function pct(a: number, b: number): string {
   if (b === 0) return "0";
   return ((a / b) * 100).toFixed(1);
 }
+
+// ── Context Menu ─────────────────────────────────────────────────────────────
+
+interface ContextMenuState {
+  x: number;
+  y: number;
+  entry: DirEntry;
+}
+
+function ContextMenu({
+  state,
+  onDelete,
+  onClose,
+}: {
+  state: ContextMenuState;
+  onDelete: (entry: DirEntry) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    const escHandler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", handler);
+    document.addEventListener("keydown", escHandler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("keydown", escHandler);
+    };
+  }, [onClose]);
+
+  // Don't allow deleting synthetic entries or root paths
+  const canDelete = state.entry.path && !state.entry.name.startsWith("<files>") && state.entry.path.length > 4;
+
+  return (
+    <div
+      ref={ref}
+      className="fixed z-[9999] bg-popover border border-border rounded-lg shadow-xl py-1 min-w-[180px]"
+      style={{ left: state.x, top: state.y }}
+    >
+      <button
+        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-muted transition-colors disabled:opacity-40 disabled:pointer-events-none"
+        onClick={() => {
+          onDelete(state.entry);
+          onClose();
+        }}
+        disabled={!canDelete}
+      >
+        <Trash2 className="w-3.5 h-3.5 text-destructive" />
+        <span>Delete {state.entry.is_dir ? "folder" : "file"}</span>
+        <span className="ml-auto text-muted-foreground">{formatBytes(state.entry.size)}</span>
+      </button>
+    </div>
+  );
+}
+
+// ── Main Component ───────────────────────────────────────────────────────────
 
 export function DiskAnalysis() {
   const {
@@ -41,14 +113,50 @@ export function DiskAnalysis() {
     navigateTo,
     progress,
     progressMsg,
+    removeEntry,
   } = useDiskScan();
+
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<DirEntry | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchDrives();
   }, [fetchDrives]);
 
+  const handleContextMenu = useCallback((e: React.MouseEvent, entry: DirEntry) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, entry });
+  }, []);
+
+  const handleTreemapContextMenu = useCallback((entry: DirEntry, x: number, y: number) => {
+    setContextMenu({ x, y, entry });
+  }, []);
+
+  const handleDeleteRequest = useCallback((entry: DirEntry) => {
+    setConfirmDelete(entry);
+    setDeleteError(null);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!confirmDelete) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await invoke<string>("delete_path", { path: confirmDelete.path });
+      removeEntry(confirmDelete.path, confirmDelete.size);
+      setConfirmDelete(null);
+    } catch (e) {
+      setDeleteError(String(e));
+    } finally {
+      setDeleting(false);
+    }
+  }, [confirmDelete, removeEntry]);
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
       {/* Drive selector bar */}
       <div className="flex-shrink-0 border-b px-4 py-3">
         <div className="flex items-center gap-2 flex-wrap">
@@ -125,18 +233,29 @@ export function DiskAnalysis() {
           </Button>
         </div>
       ) : currentEntry ? (
-        <div className="flex-1 flex flex-col min-h-0">
+        <div className="flex-1 min-h-0 overflow-y-auto relative">
+          {/* Loading overlay for drill-down scans */}
+          {scanning && scanPhase === "idle" && (
+            <div className="absolute inset-0 z-50 bg-background/60 backdrop-blur-sm flex items-center justify-center">
+              <div className="flex items-center gap-2.5 bg-card border rounded-lg px-4 py-3 shadow-lg">
+                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                <span className="text-sm">Scanning folder...</span>
+              </div>
+            </div>
+          )}
+
           {/* Treemap */}
-          <div className="flex-shrink-0 p-4">
+          <div className="p-4">
             <Treemap
               entry={currentEntry}
               onDrillDown={drillDown}
-              height={Math.max(280, 350)}
+              onContextMenu={handleTreemapContextMenu}
+              height={350}
             />
           </div>
 
           {/* Folder list */}
-          <ScrollArea className="flex-1 border-t">
+          <div className="border-t">
             <div className="divide-y">
               {currentEntry.children
                 .filter((c) => c.size > 0)
@@ -146,15 +265,68 @@ export function DiskAnalysis() {
                     entry={child}
                     parentSize={currentEntry.size}
                     onDrillDown={drillDown}
+                    onContextMenu={handleContextMenu}
+                    onDelete={handleDeleteRequest}
                   />
                 ))}
             </div>
-          </ScrollArea>
+          </div>
         </div>
       ) : null}
+
+      {/* Context menu */}
+      {contextMenu && (
+        <ContextMenu
+          state={contextMenu}
+          onDelete={handleDeleteRequest}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={confirmDelete !== null} onOpenChange={(open) => !open && !deleting && setConfirmDelete(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {confirmDelete?.is_dir ? "Folder" : "File"}</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to permanently delete{" "}
+              <span className="font-medium text-foreground">"{confirmDelete?.name}"</span>?
+              <br />
+              This will free up <span className="font-medium text-foreground">{confirmDelete ? formatBytes(confirmDelete.size) : ""}</span>.
+              <br /><br />
+              <span className="font-mono text-[11px] break-all">{confirmDelete?.path}</span>
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError && (
+            <div className="text-sm px-3 py-2 rounded-md bg-destructive/10 text-destructive">
+              {deleteError}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmDelete(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteConfirm} disabled={deleting}>
+              {deleting ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                  Delete
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
+
+// ── Sub-components ───────────────────────────────────────────────────────────
 
 function DriveButton({
   drive,
@@ -174,9 +346,7 @@ function DriveButton({
       onClick={onClick}
       disabled={scanning}
       className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border transition-colors min-w-[180px] ${
-        selected
-          ? "border-primary bg-primary/10"
-          : "border-border hover:bg-muted"
+        selected ? "border-primary bg-primary/10" : "border-border hover:bg-muted"
       }`}
     >
       <HardDrive className={`w-5 h-5 flex-shrink-0 ${selected ? "text-primary" : "text-muted-foreground"}`} />
@@ -187,7 +357,6 @@ function DriveButton({
             <span className="text-xs text-muted-foreground truncate">{drive.label}</span>
           )}
         </div>
-        {/* Usage bar */}
         <div className="h-1.5 bg-muted rounded-full mt-1 overflow-hidden">
           <div
             className={`h-full rounded-full transition-all ${
@@ -209,18 +378,23 @@ function FolderRow({
   entry,
   parentSize,
   onDrillDown,
+  onContextMenu,
+  onDelete,
 }: {
   entry: DirEntry;
   parentSize: number;
   onDrillDown: (entry: DirEntry) => void;
+  onContextMenu: (e: React.MouseEvent, entry: DirEntry) => void;
+  onDelete: (entry: DirEntry) => void;
 }) {
   const percentage = parentSize > 0 ? (entry.size / parentSize) * 100 : 0;
+  const canDelete = entry.path && !entry.name.startsWith("<files>") && entry.path.length > 4;
 
   return (
-    <button
-      className="w-full flex items-center gap-3 px-4 py-2 hover:bg-muted/50 transition-colors text-left group"
+    <div
+      className="flex items-center gap-3 px-4 py-2 hover:bg-muted/50 transition-colors text-left group cursor-pointer"
       onClick={() => entry.is_dir && onDrillDown(entry)}
-      disabled={!entry.is_dir}
+      onContextMenu={(e) => canDelete ? onContextMenu(e, entry) : undefined}
     >
       {/* Icon */}
       <div className={`w-7 h-7 rounded flex items-center justify-center flex-shrink-0 ${
@@ -259,10 +433,23 @@ function FolderRow({
         <p className="text-[10px] text-muted-foreground">{pct(entry.size, parentSize)}%</p>
       </div>
 
-      {/* Drill indicator */}
-      {entry.is_dir && (
-        <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-      )}
-    </button>
+      {/* Actions */}
+      <div className="w-14 flex-shrink-0 flex items-center justify-end gap-1">
+        {canDelete && (
+          <button
+            className="w-7 h-7 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(entry);
+            }}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {entry.is_dir && (
+          <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+        )}
+      </div>
+    </div>
   );
 }

@@ -81,13 +81,31 @@ export function useDiskScan() {
   const drillDown = useCallback(async (entry: DirEntry) => {
     if (!entry.is_dir) return;
 
+    const addToBreadcrumb = (e: DirEntry) => {
+      setBreadcrumb((prev) => {
+        // If already the last entry, don't duplicate
+        const last = prev[prev.length - 1];
+        if (last && last.path === e.path) return prev;
+
+        // If this path exists deeper in the breadcrumb, trim back to it
+        const existingIdx = prev.findIndex((b) => b.path === e.path);
+        if (existingIdx >= 0) {
+          const trimmed = prev.slice(0, existingIdx + 1);
+          trimmed[existingIdx] = e; // use the fresh entry data
+          return trimmed;
+        }
+
+        return [...prev, e];
+      });
+      setCurrentEntry(e);
+    };
+
     // If entry already has children with their own children, just navigate
     const hasDeepChildren = entry.children.some(
       (c) => c.is_dir && c.children.length > 0
     );
     if (hasDeepChildren) {
-      setBreadcrumb((prev) => [...prev, entry]);
-      setCurrentEntry(entry);
+      addToBreadcrumb(entry);
       return;
     }
 
@@ -98,8 +116,7 @@ export function useDiskScan() {
         path: entry.path,
         maxDepth: 3,
       });
-      setBreadcrumb((prev) => [...prev, result]);
-      setCurrentEntry(result);
+      addToBreadcrumb(result);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -118,6 +135,27 @@ export function useDiskScan() {
     []
   );
 
+  // Remove a deleted entry from the tree and update sizes up the breadcrumb
+  const removeEntry = useCallback((deletedPath: string, deletedSize: number) => {
+    const removeFromTree = (node: DirEntry): DirEntry => ({
+      ...node,
+      children: node.children
+        .filter((c) => c.path !== deletedPath)
+        .map((c) => c.is_dir ? removeFromTree(c) : c),
+      size: node.size - (
+        node.children.some((c) => c.path === deletedPath) ? deletedSize : 0
+      ),
+    });
+
+    // Update breadcrumb entries (each level needs size adjustment)
+    setBreadcrumb((prev) => {
+      const updated = prev.map((entry) => removeFromTree(entry));
+      const last = updated[updated.length - 1];
+      if (last) setCurrentEntry(last);
+      return updated;
+    });
+  }, []);
+
   return {
     drives,
     selectedDrive,
@@ -133,5 +171,6 @@ export function useDiskScan() {
     navigateTo,
     progress,
     progressMsg,
+    removeEntry,
   };
 }

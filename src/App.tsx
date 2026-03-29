@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Toolbar } from "@/components/Toolbar";
 import { SortHeader } from "@/components/SortHeader";
 import { AppRow } from "@/components/AppRow";
@@ -108,7 +107,7 @@ function App() {
                 onSort={handleSort}
               />
             )}
-            <ScrollArea className="flex-1">
+            <div className="flex-1 min-h-0 overflow-y-auto">
               <div className="px-4 py-2 space-y-1.5">
                 {loading && apps.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
@@ -143,7 +142,7 @@ function App() {
                   ))
                 )}
               </div>
-            </ScrollArea>
+            </div>
           </>
         ) : (
           <DiskAnalysis />

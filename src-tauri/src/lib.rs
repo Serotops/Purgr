@@ -16,35 +16,163 @@ async fn uninstall_app(uninstall_string: String) -> Result<String, String> {
     }
 
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let output = Command::new("cmd")
-            .args(["/C", &uninstall_string])
-            .output();
+        let trimmed = uninstall_string.trim();
 
-        match output {
-            Ok(o) if o.status.success() => Ok("completed".to_string()),
-            Ok(o) => {
-                let code = o.status.code().unwrap_or(-1);
-                if code == 5 || code == 740 {
-                    run_elevated(&uninstall_string)
-                } else {
-                    Ok("completed".to_string())
-                }
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                if msg.contains("740") || msg.contains("elevation") {
-                    run_elevated(&uninstall_string)
-                } else {
-                    Err(format!("Failed to execute uninstall command: {}", e))
-                }
-            }
+        // Detect URL protocols (steam://, epic://, etc.)
+        // These must be launched via `start` or ShellExecute, not cmd /C directly
+        if is_url_protocol(trimmed) {
+            return run_url_protocol(trimmed);
         }
+
+        // Detect MsiExec — needs special handling
+        if trimmed.to_lowercase().starts_with("msiexec") {
+            return run_msiexec(trimmed);
+        }
+
+        // Regular executable command
+        run_command(trimmed)
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
     .map_err(|e| e)?;
 
     Ok(result)
+}
+
+/// Check if the uninstall string contains a URL protocol like steam://
+fn is_url_protocol(s: &str) -> bool {
+    // Could be: steam://uninstall/123
+    // Or: "C:\...\steam.exe" steam://uninstall/123
+    let lower = s.to_lowercase();
+    lower.contains("://")
+}
+
+/// Launch a URL protocol via `cmd /C start` which delegates to ShellExecute
+fn run_url_protocol(uninstall_string: &str) -> Result<String, String> {
+    // Extract the URL part — it might be embedded in a larger command
+    // e.g. "C:\...\steam.exe" steam://uninstall/12345
+    let url = extract_url(uninstall_string);
+
+    if let Some(url) = url {
+        // Use `start` to open the URL via the registered protocol handler
+        let output = Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .output()
+            .map_err(|e| format!("Failed to launch protocol URL: {}", e))?;
+
+        if output.status.success() {
+            return Ok("completed".to_string());
+        }
+    }
+
+    // Fallback: try running the whole string via cmd /C start
+    let output = Command::new("cmd")
+        .args(["/C", "start", "", uninstall_string])
+        .output()
+        .map_err(|e| format!("Failed to launch: {}", e))?;
+
+    if output.status.success() {
+        Ok("completed".to_string())
+    } else {
+        // Try the whole thing as a regular command
+        run_command(uninstall_string)
+    }
+}
+
+/// Extract a URL like steam://... from a potentially larger command string
+fn extract_url(s: &str) -> Option<String> {
+    // Find something like word://path
+    for part in s.split_whitespace() {
+        let clean = part.trim_matches('"');
+        if clean.contains("://") && !clean.starts_with('/') && !clean.starts_with('-') {
+            return Some(clean.to_string());
+        }
+    }
+    None
+}
+
+/// Run MsiExec with proper error handling
+fn run_msiexec(uninstall_string: &str) -> Result<String, String> {
+    let wrapped = if uninstall_string.contains('"') {
+        format!("\"{}\"", uninstall_string)
+    } else {
+        uninstall_string.to_string()
+    };
+
+    let output = Command::new("cmd")
+        .args(["/C", &wrapped])
+        .output()
+        .map_err(|e| format!("Failed to execute MsiExec: {}", e))?;
+
+    let code = output.status.code().unwrap_or(-1);
+    match code {
+        0 | 3010 => Ok("completed".to_string()), // 3010 = reboot needed
+        1602 => Err("Uninstall was cancelled by user".to_string()),
+        1605 | 1614 => Ok("completed".to_string()), // Already gone
+        5 | 740 => run_elevated(uninstall_string),
+        _ => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let detail = if !stderr.is_empty() { stderr } else { stdout };
+            if detail.is_empty() {
+                Ok("completed".to_string())
+            } else {
+                Err(format!("Uninstall failed (exit code {}): {}", code, detail))
+            }
+        }
+    }
+}
+
+/// Run a regular uninstall command, with elevation fallback
+fn run_command(uninstall_string: &str) -> Result<String, String> {
+    // cmd /C requires an extra set of outer quotes when the command itself
+    // contains quoted paths, e.g.: cmd /C ""C:\path\app.exe" --args"
+    let wrapped = if uninstall_string.contains('"') {
+        format!("\"{}\"", uninstall_string)
+    } else {
+        uninstall_string.to_string()
+    };
+
+    let output = Command::new("cmd")
+        .args(["/C", &wrapped])
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => Ok("completed".to_string()),
+        Ok(o) => {
+            let code = o.status.code().unwrap_or(-1);
+            if code == 5 || code == 740 {
+                run_elevated(uninstall_string)
+            } else {
+                // Capture stderr/stdout for error details
+                let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                let detail = if !stderr.is_empty() {
+                    stderr
+                } else if !stdout.is_empty() {
+                    stdout
+                } else {
+                    String::new()
+                };
+
+                if detail.is_empty() {
+                    // No error detail — treat as completed (many uninstallers
+                    // return non-zero but still worked, e.g. spawning a GUI)
+                    Ok("completed".to_string())
+                } else {
+                    Err(format!("Uninstall failed (exit code {}): {}", code, detail))
+                }
+            }
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("740") || msg.contains("elevation") {
+                run_elevated(uninstall_string)
+            } else {
+                Err(format!("Failed to execute uninstall command: {}", e))
+            }
+        }
+    }
 }
 
 fn run_elevated(command: &str) -> Result<String, String> {
@@ -85,6 +213,38 @@ fn remove_registry_entry(registry_key: String) -> Result<String, String> {
 #[tauri::command]
 fn refresh_app_status(install_location: String) -> Result<bool, String> {
     Ok(std::path::Path::new(&install_location).exists())
+}
+
+// ── File operations ──────────────────────────────────────────────────────────
+
+#[tauri::command]
+async fn delete_path(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = std::path::Path::new(&path);
+        if !target.exists() {
+            return Ok("Already deleted".to_string());
+        }
+        if target.is_dir() {
+            std::fs::remove_dir_all(target).map_err(|e| {
+                if e.raw_os_error() == Some(5) {
+                    format!("Access denied — try running as administrator")
+                } else {
+                    format!("Failed to delete folder: {}", e)
+                }
+            })?;
+        } else {
+            std::fs::remove_file(target).map_err(|e| {
+                if e.raw_os_error() == Some(5) {
+                    format!("Access denied — try running as administrator")
+                } else {
+                    format!("Failed to delete file: {}", e)
+                }
+            })?;
+        }
+        Ok(format!("Deleted: {}", path))
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 // ── Disk analysis commands ───────────────────────────────────────────────────
@@ -167,6 +327,7 @@ pub fn run() {
             check_app_installed,
             remove_registry_entry,
             refresh_app_status,
+            delete_path,
             list_drives,
             scan_directory,
             scan_drive_progressive,
