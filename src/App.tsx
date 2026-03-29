@@ -52,6 +52,7 @@ function App() {
     uninstallApp,
     removeRegistryEntry,
     dismissAction,
+    recheckApp,
     bulkRemoveOrphans,
     activeActions,
     stats,
@@ -222,6 +223,7 @@ function App() {
                       onUninstall={uninstallApp}
                       onRemoveEntry={removeRegistryEntry}
                       onDismiss={dismissAction}
+                      onRecheck={recheckApp}
                       selected={selectedIdx === i}
                       searchQuery={search}
                       maxSize={stats.totalSizeKb}

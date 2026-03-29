@@ -4,7 +4,7 @@ import type { InstalledApp, FilterStatus, SortField, SortDirection } from "@/typ
 
 export type AppAction = {
   registryKey: string;
-  status: "uninstalling" | "verifying" | "done" | "error";
+  status: "uninstalling" | "verifying" | "done" | "error" | "pending";
   message: string;
 };
 
@@ -87,27 +87,16 @@ export function useApps() {
         setApps((prev) => prev.filter((a) => a.registry_key !== key));
         setTimeout(() => setAction(key, null), 2000);
       } else {
-        // Rescan — the app might now be orphaned even if not fully removed
-        setAction(key, { registryKey: key, status: "done", message: "Uninstaller finished — refreshing list..." });
-        await scan();
-        setTimeout(() => setAction(key, null), 3000);
+        // App still in registry — show pending state so user can recheck
+        setAction(key, {
+          registryKey: key,
+          status: "pending",
+          message: "Uninstaller finished — click Recheck to verify removal",
+        });
       }
     } catch (e) {
       const errMsg = String(e);
-      const isBrokenPath = errMsg.includes("not found") ||
-        errMsg.includes("not recognized") ||
-        errMsg.includes("cannot find") ||
-        errMsg.includes("The system cannot find");
-
-      if (isBrokenPath) {
-        setAction(key, {
-          registryKey: key,
-          status: "error",
-          message: "Uninstaller not found — use 'Remove Registry Entry' to clean up this entry",
-        });
-      } else {
-        setAction(key, { registryKey: key, status: "error", message: errMsg });
-      }
+      setAction(key, { registryKey: key, status: "error", message: errMsg });
       // Don't auto-clear errors — let the user see them
     }
   }, [scan, setAction]);
@@ -168,6 +157,23 @@ export function useApps() {
       }
     }
   }, [apps, setAction]);
+
+  const recheckApp = useCallback(async (app: InstalledApp) => {
+    const key = app.registry_key;
+    setAction(key, { registryKey: key, status: "verifying", message: "Checking..." });
+    const stillExists = await invoke<boolean>("check_app_installed", { registryKey: key });
+    if (!stillExists) {
+      setAction(key, { registryKey: key, status: "done", message: "Successfully removed" });
+      setApps((prev) => prev.filter((a) => a.registry_key !== key));
+      setTimeout(() => setAction(key, null), 2000);
+    } else {
+      setAction(key, {
+        registryKey: key,
+        status: "pending",
+        message: "Still in registry — try again or remove the entry manually",
+      });
+    }
+  }, [setAction]);
 
   const filteredApps = useMemo(() => {
     let result = apps;
@@ -235,6 +241,7 @@ export function useApps() {
     uninstallApp,
     removeRegistryEntry,
     dismissAction,
+    recheckApp,
     bulkRemoveOrphans,
     activeActions,
     stats,

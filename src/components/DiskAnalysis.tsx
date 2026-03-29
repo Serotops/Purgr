@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { showToast } from "@/components/Toast";
 import type { DirEntry, DriveInfo } from "@/types";
 import { useDiskScan } from "@/hooks/useDiskScan";
 import { Button } from "@/components/ui/button";
@@ -127,12 +128,10 @@ export function DiskAnalysis() {
     progress,
     progressMsg,
     removeEntry,
-    rescanCurrent,
   } = useDiskScan();
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<DirEntry | null>(null);
-  const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -156,20 +155,22 @@ export function DiskAnalysis() {
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!confirmDelete) return;
-    setDeleting(true);
+    const entry = confirmDelete;
+    // Close dialog immediately — don't make the user wait
+    setConfirmDelete(null);
     setDeleteError(null);
+
+    // Optimistically remove from tree
+    removeEntry(entry.path, entry.size);
+
+    // Delete in background
     try {
-      await invoke<string>("delete_path", { path: confirmDelete.path });
-      removeEntry(confirmDelete.path, confirmDelete.size);
-      setConfirmDelete(null);
-      // Rescan to get accurate disk state after deletion
-      rescanCurrent();
+      await invoke<string>("delete_path", { path: entry.path });
+      showToast(`Deleted ${entry.name}`, "success");
     } catch (e) {
-      setDeleteError(String(e));
-    } finally {
-      setDeleting(false);
+      showToast(String(e), "error");
     }
-  }, [confirmDelete, removeEntry, rescanCurrent]);
+  }, [confirmDelete, removeEntry]);
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
@@ -300,7 +301,7 @@ export function DiskAnalysis() {
       )}
 
       {/* Delete confirmation dialog */}
-      <Dialog open={confirmDelete !== null} onOpenChange={(open) => !open && !deleting && setConfirmDelete(null)}>
+      <Dialog open={confirmDelete !== null} onOpenChange={(open) => !open && setConfirmDelete(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete {confirmDelete?.is_dir ? "Folder" : "File"}</DialogTitle>
@@ -319,21 +320,12 @@ export function DiskAnalysis() {
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmDelete(null)} disabled={deleting}>
+            <Button variant="outline" onClick={() => setConfirmDelete(null)}>
               Cancel
             </Button>
-            <Button variant="destructive" onClick={handleDeleteConfirm} disabled={deleting}>
-              {deleting ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                  Deleting...
-                </>
-              ) : (
-                <>
-                  <Trash2 className="w-3.5 h-3.5 mr-1.5" />
-                  Delete
-                </>
-              )}
+            <Button variant="destructive" onClick={handleDeleteConfirm}>
+              <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>

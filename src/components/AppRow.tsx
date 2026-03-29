@@ -27,6 +27,7 @@ import {
   CheckCircle2,
   XCircle,
   X,
+  RefreshCw,
 } from "lucide-react";
 
 function formatSize(kb: number): string {
@@ -58,12 +59,13 @@ interface AppRowProps {
   onUninstall: (app: InstalledApp) => void;
   onRemoveEntry: (app: InstalledApp) => void;
   onDismiss: (registryKey: string) => void;
+  onRecheck?: (app: InstalledApp) => void;
   selected?: boolean;
   searchQuery?: string;
   maxSize?: number;
 }
 
-export function AppRow({ app, action, onUninstall, onRemoveEntry, onDismiss, selected, searchQuery = "", maxSize = 0 }: AppRowProps) {
+export function AppRow({ app, action, onUninstall, onRemoveEntry, onDismiss, onRecheck, selected, searchQuery = "", maxSize = 0 }: AppRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<"uninstall" | "remove" | null>(null);
 
@@ -88,6 +90,8 @@ export function AppRow({ app, action, onUninstall, onRemoveEntry, onDismiss, sel
             ? "bg-green-500/5 ring-1 ring-green-500/20"
             : action?.status === "error"
             ? "bg-destructive/5 ring-1 ring-destructive/30"
+            : action?.status === "pending"
+            ? "bg-yellow-500/5 ring-1 ring-yellow-500/20"
             : app.is_orphan
             ? "bg-destructive/5 ring-1 ring-destructive/20"
             : selected
@@ -123,6 +127,8 @@ export function AppRow({ app, action, onUninstall, onRemoveEntry, onDismiss, sel
               ? "bg-green-500/10 text-green-500"
               : action?.status === "error"
               ? "bg-destructive/10 text-destructive"
+              : action?.status === "pending"
+              ? "bg-yellow-500/10 text-yellow-500"
               : app.is_orphan
               ? "bg-destructive/10 text-destructive/70"
               : "bg-muted/60 text-muted-foreground/60"
@@ -133,6 +139,8 @@ export function AppRow({ app, action, onUninstall, onRemoveEntry, onDismiss, sel
               <CheckCircle2 className="w-4 h-4" />
             ) : action?.status === "error" ? (
               <XCircle className="w-4 h-4" />
+            ) : action?.status === "pending" ? (
+              <CheckCircle2 className="w-4 h-4" />
             ) : app.is_orphan ? (
               <FolderX className="w-4 h-4" />
             ) : (
@@ -166,6 +174,11 @@ export function AppRow({ app, action, onUninstall, onRemoveEntry, onDismiss, sel
                   Failed
                 </Badge>
               )}
+              {action?.status === "pending" && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-yellow-500/50 text-yellow-500">
+                  Pending
+                </Badge>
+              )}
             </div>
             {action ? (
               <p className={`text-xs truncate ${
@@ -197,6 +210,47 @@ export function AppRow({ app, action, onUninstall, onRemoveEntry, onDismiss, sel
           {/* Error action: offer registry cleanup */}
           {action?.status === "error" && (
             <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs flex-shrink-0"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setConfirmDialog("remove");
+                }}
+              >
+                <FolderX className="w-3 h-3 mr-1.5" />
+                Remove Entry
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 flex-shrink-0 text-muted-foreground hover:text-foreground"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDismiss(app.registry_key);
+                }}
+              >
+                <X className="w-3.5 h-3.5" />
+              </Button>
+            </>
+          )}
+
+          {/* Pending action: recheck or remove */}
+          {action?.status === "pending" && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs flex-shrink-0"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRecheck?.(app);
+                }}
+              >
+                <RefreshCw className="w-3 h-3 mr-1.5" />
+                Recheck
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
