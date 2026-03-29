@@ -1,10 +1,5 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import type { DirEntry } from "@/types";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -227,7 +222,8 @@ interface TreemapProps {
 export function Treemap({ entry, onDrillDown, height = 400 }: TreemapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState({ w: 800, h: 400 });
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
     const el = containerRef.current;
@@ -245,15 +241,55 @@ export function Treemap({ entry, onDrillDown, height = 400 }: TreemapProps) {
     return buildFlatNodes(children, rect, containerSize.w * containerSize.h, 0, 2, entry.name);
   }, [entry, containerSize]);
 
+  // Hit-test: find the deepest (highest depth) node under the cursor
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    let best = -1;
+    let bestDepth = -1;
+    for (let i = 0; i < nodes.length; i++) {
+      const r = nodes[i].rect;
+      if (mx >= r.x && mx < r.x + r.w && my >= r.y && my < r.y + r.h) {
+        if (nodes[i].depth > bestDepth) {
+          best = i;
+          bestDepth = nodes[i].depth;
+        }
+      }
+    }
+    setHoveredIdx(best >= 0 ? best : null);
+    setTooltipPos({ x: mx, y: my });
+  }, [nodes]);
+
+  const handleMouseLeave = useCallback(() => {
+    setHoveredIdx(null);
+  }, []);
+
+  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    if (hoveredIdx === null) return;
+    const node = nodes[hoveredIdx];
+    if (node.entry.is_dir && node.entry.path) {
+      e.stopPropagation();
+      onDrillDown(node.entry);
+    }
+  }, [hoveredIdx, nodes, onDrillDown]);
+
+  const hoveredNode = hoveredIdx !== null ? nodes[hoveredIdx] : null;
+
   return (
     <div
       ref={containerRef}
       className="relative rounded-lg overflow-hidden border border-border"
-      style={{ height, background: "#12121c" }}
+      style={{ height, background: "#12121c", cursor: hoveredNode?.entry.is_dir ? "pointer" : "default" }}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      onDoubleClick={handleDoubleClick}
     >
       {nodes.map((node, i) => {
-        const id = node.entry.path + "|" + node.entry.name + "|" + i;
-        const isHovered = hoveredId === id;
+        const isHovered = hoveredIdx === i;
         const isLeaf = node.depth > 0 || !node.entry.is_dir || node.entry.children.length === 0;
         const r = node.rect;
 
@@ -263,93 +299,89 @@ export function Treemap({ entry, onDrillDown, height = 400 }: TreemapProps) {
         const canShowSize = r.w > 60 && r.h > 14;
 
         return (
-          <Tooltip key={id}>
-            <TooltipTrigger asChild>
+          <div
+            key={i}
+            className="absolute overflow-hidden pointer-events-none"
+            style={{
+              left: r.x,
+              top: r.y,
+              width: r.w,
+              height: r.h,
+              backgroundColor: isLeaf
+                ? node.color
+                : `color-mix(in srgb, ${node.color} 20%, #1a1a28)`,
+              border: isHovered
+                ? "2px solid rgba(255,255,255,0.85)"
+                : isLeaf
+                ? "1px solid rgba(0,0,0,0.4)"
+                : "1px solid rgba(255,255,255,0.08)",
+              borderRadius: node.depth === 0 ? 4 : 2,
+              zIndex: isHovered ? 100 : node.depth * 10 + (isLeaf ? 5 : 0),
+              filter: isHovered ? "brightness(1.3)" : undefined,
+              transition: "filter 0.15s ease, border-color 0.15s ease",
+              boxShadow: isHovered ? "0 0 16px rgba(255,255,255,0.2)" : undefined,
+            }}
+          >
+            {canShowName && (
               <div
-                className="absolute overflow-hidden"
+                className="truncate select-none px-1.5 py-0.5"
                 style={{
-                  left: r.x,
-                  top: r.y,
-                  width: r.w,
-                  height: r.h,
-                  backgroundColor: isLeaf
-                    ? node.color
-                    : `color-mix(in srgb, ${node.color} 20%, #1a1a28)`,
-                  border: isHovered
-                    ? "2px solid rgba(255,255,255,0.8)"
-                    : isLeaf
-                    ? "1px solid rgba(0,0,0,0.4)"
-                    : "1px solid rgba(255,255,255,0.08)",
-                  borderRadius: node.depth === 0 ? 4 : 2,
-                  zIndex: isHovered ? 100 : node.depth * 10 + (isLeaf ? 5 : 0),
-                  cursor: node.entry.is_dir && node.entry.path ? "pointer" : "default",
-                  transition: "border-color 0.1s",
-                  boxShadow: isHovered ? "0 0 12px rgba(255,255,255,0.15)" : undefined,
-                }}
-                onMouseEnter={(e) => {
-                  e.stopPropagation();
-                  setHoveredId(id);
-                }}
-                onMouseLeave={(e) => {
-                  e.stopPropagation();
-                  setHoveredId(null);
-                }}
-                onDoubleClick={(e) => {
-                  e.stopPropagation();
-                  if (node.entry.is_dir && node.entry.path) onDrillDown(node.entry);
+                  fontSize: node.depth === 0 ? 11 : 9,
+                  fontWeight: node.depth === 0 ? 600 : 400,
+                  color: "rgba(255,255,255,0.9)",
+                  textShadow: "0 1px 3px rgba(0,0,0,0.9)",
+                  lineHeight: "14px",
+                  background: !isLeaf
+                    ? `linear-gradient(180deg, ${node.color}dd 0%, ${node.color}88 100%)`
+                    : undefined,
                 }}
               >
-                {canShowName && (
-                  <div
-                    className="truncate select-none pointer-events-none px-1.5 py-0.5"
+                {node.entry.name}
+                {canShowSize && (
+                  <span
                     style={{
+                      color: "rgba(255,255,255,0.95)",
+                      fontWeight: 700,
                       fontSize: node.depth === 0 ? 11 : 9,
-                      fontWeight: node.depth === 0 ? 600 : 400,
-                      color: "rgba(255,255,255,0.9)",
-                      textShadow: "0 1px 3px rgba(0,0,0,0.9)",
-                      lineHeight: "14px",
-                      background: !isLeaf
-                        ? `linear-gradient(180deg, ${node.color}dd 0%, ${node.color}88 100%)`
-                        : undefined,
+                      marginLeft: 6,
                     }}
                   >
-                    {node.entry.name}
-                    {canShowSize && (
-                      <span
-                        style={{
-                          color: "rgba(255,255,255,0.95)",
-                          fontWeight: 700,
-                          fontSize: node.depth === 0 ? 11 : 9,
-                          marginLeft: 6,
-                        }}
-                      >
-                        {formatBytes(node.entry.size)}
-                      </span>
-                    )}
-                  </div>
+                    {formatBytes(node.entry.size)}
+                  </span>
                 )}
               </div>
-            </TooltipTrigger>
-            <TooltipContent side="top" className="max-w-xs" style={{ zIndex: 200 }}>
-              <div className="space-y-0.5">
-                <p className="font-medium text-sm">{node.entry.name}</p>
-                <p className="text-xs text-muted-foreground">{formatBytes(node.entry.size)}</p>
-                {node.entry.is_dir && (
-                  <p className="text-xs text-muted-foreground">
-                    {node.entry.file_count.toLocaleString()} files, {node.entry.dir_count.toLocaleString()} folders
-                  </p>
-                )}
-                {node.entry.path && (
-                  <p className="text-[10px] text-muted-foreground font-mono truncate">{node.entry.path}</p>
-                )}
-                {node.entry.is_dir && node.entry.path && (
-                  <p className="text-[10px] text-muted-foreground italic">Double-click to explore</p>
-                )}
-              </div>
-            </TooltipContent>
-          </Tooltip>
+            )}
+          </div>
         );
       })}
+
+      {/* Floating tooltip */}
+      {hoveredNode && (
+        <div
+          className="fixed pointer-events-none"
+          style={{
+            left: tooltipPos.x + (containerRef.current?.getBoundingClientRect().left ?? 0) + 12,
+            top: tooltipPos.y + (containerRef.current?.getBoundingClientRect().top ?? 0) - 8,
+            zIndex: 999,
+          }}
+        >
+          <div className="bg-popover border border-border rounded-md px-3 py-2 shadow-xl max-w-xs">
+            <p className="font-medium text-sm text-popover-foreground">{hoveredNode.entry.name}</p>
+            <p className="text-xs text-muted-foreground">{formatBytes(hoveredNode.entry.size)}</p>
+            {hoveredNode.entry.is_dir && (
+              <p className="text-xs text-muted-foreground">
+                {hoveredNode.entry.file_count.toLocaleString()} files, {hoveredNode.entry.dir_count.toLocaleString()} folders
+              </p>
+            )}
+            {hoveredNode.entry.path && (
+              <p className="text-[10px] text-muted-foreground font-mono truncate">{hoveredNode.entry.path}</p>
+            )}
+            {hoveredNode.entry.is_dir && hoveredNode.entry.path && (
+              <p className="text-[10px] text-muted-foreground italic">Double-click to explore</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

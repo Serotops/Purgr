@@ -2,6 +2,7 @@ mod disk;
 mod registry;
 
 use std::process::Command;
+use tauri::Emitter;
 
 #[tauri::command]
 fn get_installed_apps() -> Result<Vec<registry::InstalledApp>, String> {
@@ -15,18 +16,26 @@ async fn uninstall_app(uninstall_string: String) -> Result<String, String> {
     }
 
     let result = tauri::async_runtime::spawn_blocking(move || {
-        // Try direct execution first
-        let direct = execute_uninstall(&uninstall_string);
+        let output = Command::new("cmd")
+            .args(["/C", &uninstall_string])
+            .output();
 
-        match direct {
-            Ok(_) => Ok("completed".to_string()),
-            Err(e) => {
-                let msg = e.to_string();
-                // If access denied or elevation required, retry elevated
-                if msg.contains("740") || msg.contains("elevation") || msg.contains("Access is denied") {
+        match output {
+            Ok(o) if o.status.success() => Ok("completed".to_string()),
+            Ok(o) => {
+                let code = o.status.code().unwrap_or(-1);
+                if code == 5 || code == 740 {
                     run_elevated(&uninstall_string)
                 } else {
-                    Err(e)
+                    Ok("completed".to_string())
+                }
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("740") || msg.contains("elevation") {
+                    run_elevated(&uninstall_string)
+                } else {
+                    Err(format!("Failed to execute uninstall command: {}", e))
                 }
             }
         }
@@ -38,52 +47,7 @@ async fn uninstall_app(uninstall_string: String) -> Result<String, String> {
     Ok(result)
 }
 
-fn execute_uninstall(uninstall_string: &str) -> Result<String, String> {
-    let trimmed = uninstall_string.trim();
-
-    // Handle MsiExec specially — it needs to be called directly, not via cmd /C
-    if trimmed.to_lowercase().starts_with("msiexec") {
-        let output = Command::new("cmd")
-            .args(["/C", trimmed])
-            .output()
-            .map_err(|e| format!("Failed to execute: {}", e))?;
-
-        // MsiExec returns 0 on success, 1602 on user cancel, 1605 if not found
-        return match output.status.code() {
-            Some(0) => Ok("completed".to_string()),
-            Some(1602) => Err("Uninstall was cancelled by user".to_string()),
-            Some(1605) => Ok("completed".to_string()), // Already uninstalled
-            Some(5) | Some(740) => Err("elevation".to_string()),
-            Some(code) => {
-                // Many codes still mean success — the uninstaller ran
-                Ok(format!("completed with code {}", code))
-            }
-            None => Ok("completed".to_string()),
-        };
-    }
-
-    // For everything else: run via cmd /C
-    // This handles quoted paths, arguments, etc.
-    let output = Command::new("cmd")
-        .args(["/C", trimmed])
-        .output()
-        .map_err(|e| {
-            let msg = e.to_string();
-            if e.raw_os_error() == Some(740) {
-                "elevation".to_string()
-            } else {
-                format!("Failed to execute: {}", msg)
-            }
-        })?;
-
-    match output.status.code() {
-        Some(5) | Some(740) => Err("elevation".to_string()),
-        _ => Ok("completed".to_string()),
-    }
-}
-
 fn run_elevated(command: &str) -> Result<String, String> {
-    // Use ShellExecuteW via PowerShell Start-Process -Verb RunAs
     let output = Command::new("powershell")
         .args([
             "-NoProfile",
@@ -103,7 +67,6 @@ fn run_elevated(command: &str) -> Result<String, String> {
         if stderr.contains("canceled") || stderr.contains("cancelled") || stderr.contains("The operation was canceled") {
             Err("User cancelled the elevation prompt".to_string())
         } else {
-            // Still treat as completed — the uninstaller likely ran
             Ok("completed".to_string())
         }
     }
@@ -124,21 +87,74 @@ fn refresh_app_status(install_location: String) -> Result<bool, String> {
     Ok(std::path::Path::new(&install_location).exists())
 }
 
-// --- Disk analysis commands ---
+// ── Disk analysis commands ───────────────────────────────────────────────────
 
 #[tauri::command]
 fn list_drives() -> Result<Vec<disk::DriveInfo>, String> {
     disk::list_drives().map_err(|e| e.to_string())
 }
 
+/// Scan a specific directory with the fast parallel scanner.
 #[tauri::command]
 async fn scan_directory(path: String, max_depth: u32) -> Result<disk::DirEntry, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        disk::scan_directory(&path, max_depth)
+        disk::scan_fast(&path, max_depth)
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
     .map_err(|e| e.to_string())
+}
+
+/// Progressive drive scan:
+///   1. Emits "scan-shallow" instantly with folder names (no sizes)
+///   2. Tries MFT scan (instant full results if admin + NTFS)
+///   3. Falls back to parallel FindFirstFileExW scan
+///   4. Emits "scan-complete" with full results
+#[tauri::command]
+async fn scan_drive_progressive(
+    drive_letter: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let letter = drive_letter.chars().next().unwrap_or('C');
+    let path = format!("{}:\\", letter);
+
+    // Phase 1: Instant shallow scan (just folder names, no sizes)
+    let shallow_path = path.clone();
+    let shallow = tauri::async_runtime::spawn_blocking(move || {
+        disk::scan_shallow(&shallow_path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    let _ = app.emit("scan-shallow", &shallow);
+
+    // Phase 2: Try MFT scan first (needs admin, NTFS)
+    let app_handle = app.clone();
+    let mft_result = tauri::async_runtime::spawn_blocking(move || {
+        let progress_emitter = |pct: f64, msg: &str| {
+            let _ = app_handle.emit("scan-progress", serde_json::json!({
+                "percent": pct,
+                "message": msg,
+            }));
+        };
+
+        // Try MFT
+        match disk::scan_mft(letter, &progress_emitter) {
+            Ok(result) => Ok(result),
+            Err(_mft_err) => {
+                // MFT failed — fall back to parallel fast scan with progress
+                disk::scan_fast_with_progress(&path, 4, &progress_emitter)
+            }
+        }
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+    .map_err(|e| e.to_string())?;
+
+    let _ = app.emit("scan-complete", &mft_result);
+
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -153,6 +169,7 @@ pub fn run() {
             refresh_app_status,
             list_drives,
             scan_directory,
+            scan_drive_progressive,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

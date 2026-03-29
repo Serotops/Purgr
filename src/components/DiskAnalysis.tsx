@@ -32,12 +32,15 @@ export function DiskAnalysis() {
     currentEntry,
     breadcrumb,
     scanning,
+    scanPhase,
     loadingDrives,
     error,
     fetchDrives,
     scanDrive,
     drillDown,
     navigateTo,
+    progress,
+    progressMsg,
   } = useDiskScan();
 
   useEffect(() => {
@@ -98,11 +101,21 @@ export function DiskAnalysis() {
             Select a drive above to scan and visualize disk usage.
           </p>
         </div>
-      ) : scanning ? (
-        <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
-          <Loader2 className="w-8 h-8 animate-spin mb-3" />
-          <p className="text-sm">Scanning {selectedDrive}\...</p>
-          <p className="text-xs mt-1">This may take a while for large drives</p>
+      ) : scanPhase !== "idle" ? (
+        <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground px-12">
+          <Loader2 className="w-8 h-8 animate-spin mb-4" />
+          <p className="text-sm mb-3">Scanning {selectedDrive}\...</p>
+          <div className="w-full max-w-sm">
+            <div className="h-2 bg-muted rounded-full overflow-hidden">
+              <div
+                className="h-full bg-primary rounded-full transition-all duration-300"
+                style={{ width: `${Math.max(progress, scanPhase === "shallow" ? 2 : 0)}%` }}
+              />
+            </div>
+            <p className="text-xs mt-2 text-center truncate">
+              {progressMsg || (scanPhase === "shallow" ? "Reading folder structure..." : "Starting scan...")}
+            </p>
+          </div>
         </div>
       ) : error ? (
         <div className="flex-1 flex flex-col items-center justify-center">

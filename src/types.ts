@@ -22,6 +22,7 @@ export interface DriveInfo {
   total_bytes: number;
   free_bytes: number;
   used_bytes: number;
+  is_ntfs: boolean;
 }
 
 export interface DirEntry {
