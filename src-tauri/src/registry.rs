@@ -147,33 +147,6 @@ fn determine_orphan_status(install_location: &str, _uninstall_string: &str) -> b
     !Path::new(cleaned).exists()
 }
 
-fn extract_exe_path(uninstall_string: &str) -> String {
-    let trimmed = uninstall_string.trim();
-
-    // Handle MsiExec — can't determine path from this
-    if trimmed.to_lowercase().starts_with("msiexec") {
-        return String::new();
-    }
-
-    // Handle rundll32 — can't determine path
-    if trimmed.to_lowercase().starts_with("rundll32") {
-        return String::new();
-    }
-
-    // Handle quoted paths
-    if trimmed.starts_with('"') {
-        if let Some(end) = trimmed[1..].find('"') {
-            return trimmed[1..end + 1].to_string();
-        }
-    }
-
-    // Handle unquoted paths — take everything up to .exe
-    if let Some(pos) = trimmed.to_lowercase().find(".exe") {
-        return trimmed[..pos + 4].to_string();
-    }
-
-    String::new()
-}
 
 pub fn check_entry_exists(registry_key: &str) -> Result<bool, Box<dyn std::error::Error>> {
     let (hive_name, remaining) = registry_key
