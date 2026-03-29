@@ -10,9 +10,15 @@ export function useAppIcon(iconPath: string): string | null {
   );
 
   useEffect(() => {
-    if (!iconPath || iconCache.has(iconPath) || pendingRequests.has(iconPath)) {
+    // Already cached
+    const cached = iconCache.get(iconPath);
+    if (cached !== undefined) {
+      if (cached !== icon) setIcon(cached);
       return;
     }
+
+    // Already loading
+    if (!iconPath || pendingRequests.has(iconPath)) return;
 
     pendingRequests.add(iconPath);
 
@@ -24,14 +30,7 @@ export function useAppIcon(iconPath: string): string | null {
       iconCache.set(iconPath, null);
       pendingRequests.delete(iconPath);
     });
-  }, [iconPath]);
-
-  // Check cache on re-render (another instance may have loaded it)
-  useEffect(() => {
-    if (iconCache.has(iconPath) && icon !== iconCache.get(iconPath)) {
-      setIcon(iconCache.get(iconPath) ?? null);
-    }
-  });
+  }, [iconPath]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return icon;
 }

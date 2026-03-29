@@ -123,9 +123,9 @@ export function DiskAnalysis() {
     if (!confirmDelete) return;
     const entry = confirmDelete;
     setConfirmDelete(null); setDeleteError(null);
-    removeEntry(entry.path, entry.size);
     try {
       await invoke<string>("delete_path", { path: entry.path });
+      removeEntry(entry.path, entry.size);
       showToast(t("delete.deleted", { name: entry.name }), "success");
     } catch (e) {
       showToast(String(e), "error");

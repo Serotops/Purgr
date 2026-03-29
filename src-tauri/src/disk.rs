@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -445,7 +447,7 @@ pub fn scan_shallow(path: &str) -> Result<DirEntry, Box<dyn std::error::Error + 
     })
 }
 
-// ── MFT Scanner ──────────────────────────────────────────────────────────────
+// ── MFT Scanner (disabled — kept for future use) ─────────────────────────────
 //
 // Optimization 4: Read the NTFS Master File Table directly for near-instant
 // full-drive scanning. Requires admin privileges and NTFS volume.

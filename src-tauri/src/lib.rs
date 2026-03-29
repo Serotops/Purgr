@@ -317,14 +317,10 @@ async fn scan_drive_progressive(
             }));
         };
 
-        // Try MFT
-        match disk::scan_mft(letter, &progress_emitter) {
-            Ok(result) => Ok(result),
-            Err(_mft_err) => {
-                // MFT failed — fall back to parallel fast scan with progress
-                disk::scan_fast_with_progress(&path, 4, &progress_emitter)
-            }
-        }
+        // Use the parallel fast scanner — reliable and handles all edge cases.
+        // MFT scanning is disabled for now as it can produce incomplete trees
+        // on some NTFS configurations.
+        disk::scan_fast_with_progress(&path, 4, &progress_emitter)
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?

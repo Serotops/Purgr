@@ -8,7 +8,7 @@ export function useDiskScan() {
   const [selectedDrive, setSelectedDrive] = useState<string | null>(null);
   const [currentEntry, setCurrentEntry] = useState<DirEntry | null>(null);
   const [scanning, setScanning] = useState(false);
-  const [scanPhase, setScanPhase] = useState<"idle" | "shallow" | "deep">("idle");
+  const [scanPhase, _setScanPhase] = useState<"idle" | "shallow" | "deep">("idle");
   const [loadingDrives, setLoadingDrives] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [breadcrumb, setBreadcrumb] = useState<DirEntry[]>([]);
@@ -17,6 +17,11 @@ export function useDiskScan() {
 
   // Track which drive is expected — ignore events from stale scans
   const expectedDriveRef = useRef<string | null>(null);
+  const scanPhaseRef = useRef<"idle" | "shallow" | "deep">("idle");
+  const setScanPhase = useCallback((phase: "idle" | "shallow" | "deep") => {
+    scanPhaseRef.current = phase;
+    _setScanPhase(phase);
+  }, []);
 
   useEffect(() => {
     const unlistenShallow = listen<DirEntry>("scan-shallow", (event) => {
@@ -78,15 +83,25 @@ export function useDiskScan() {
     setProgress(0);
     setProgressMsg("");
 
+    // Safety timeout — if scan-complete event never arrives, reset after 5 minutes
+    const timeout = setTimeout(() => {
+      if (expectedDriveRef.current === driveLetter && scanPhaseRef.current !== "idle") {
+        setScanning(false);
+        setScanPhase("idle");
+        setError("Scan timed out");
+      }
+    }, 300000);
+
     try {
       await invoke("scan_drive_progressive", { driveLetter });
     } catch (e) {
-      // Only show error if this drive is still selected
       if (expectedDriveRef.current === driveLetter) {
         setError(String(e));
         setScanning(false);
         setScanPhase("idle");
       }
+    } finally {
+      clearTimeout(timeout);
     }
   }, []);
 
