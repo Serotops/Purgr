@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Build and sign
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build
+
+      - name: Read signature
+        id: sig
+        shell: pwsh
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          $sigFile = "src-tauri/target/release/bundle/nsis/Purgr_${version}_x64-setup.nsis.zip.sig"
+          $sig = Get-Content $sigFile -Raw
+          echo "signature=$sig" >> $env:GITHUB_OUTPUT
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Generate latest.json
+        shell: pwsh
+        run: |
+          $version = "${{ steps.sig.outputs.version }}"
+          $signature = "${{ steps.sig.outputs.signature }}"
+          $tag = "${{ github.ref_name }}"
+          $json = @{
+            version = $version
+            notes = "Release $tag"
+            pub_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+            platforms = @{
+              "windows-x86_64" = @{
+                signature = $signature.Trim()
+                url = "https://github.com/Serotops/purgr/releases/download/$tag/Purgr_${version}_x64-setup.nsis.zip"
+              }
+            }
+          } | ConvertTo-Json -Depth 4
+          Set-Content -Path "latest.json" -Value $json
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Purgr ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            src-tauri/target/release/bundle/nsis/Purgr_${{ steps.sig.outputs.version }}_x64-setup.exe
+            src-tauri/target/release/bundle/nsis/Purgr_${{ steps.sig.outputs.version }}_x64-setup.nsis.zip
+            src-tauri/target/release/bundle/nsis/Purgr_${{ steps.sig.outputs.version }}_x64-setup.nsis.zip.sig
+            latest.json
