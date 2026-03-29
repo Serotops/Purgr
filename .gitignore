@@ -1,24 +1,46 @@
+# Claude Code
+.claude/
+
+# Dependencies
+node_modules
+
+# Build output
+dist
+dist-ssr
+
+# Rust build output
+src-tauri/target/
+src-tauri/gen/schemas
+
 # Logs
-logs
 *.log
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log*
 pnpm-debug.log*
-lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# Environment / secrets
 *.local
+.env
+.env.*
 
-# Editor directories and files
+# Editor directories
 .vscode/*
 !.vscode/extensions.json
 .idea
-.DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Installer output
+*.exe
+*.msi
+*.dmg
+*.AppImage
+*.deb
