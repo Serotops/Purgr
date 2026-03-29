@@ -1,6 +1,42 @@
-import { Component, type ReactNode } from "react";
+import { Component, type ReactNode, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, RefreshCw } from "lucide-react";
+import { showToast } from "@/components/Toast";
+
+// ── Global error handler (async errors, unhandled rejections) ────────────────
+
+export function GlobalErrorHandler({ children }: { children: ReactNode }) {
+  useEffect(() => {
+    const onError = (e: ErrorEvent) => {
+      e.preventDefault();
+      console.error("Unhandled error:", e.error);
+      showToast(e.message || "An unexpected error occurred", "error");
+    };
+
+    const onRejection = (e: PromiseRejectionEvent) => {
+      e.preventDefault();
+      console.error("Unhandled rejection:", e.reason);
+      const msg = e.reason instanceof Error
+        ? e.reason.message
+        : typeof e.reason === "string"
+        ? e.reason
+        : "An unexpected error occurred";
+      showToast(msg, "error");
+    };
+
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onRejection);
+    };
+  }, []);
+
+  return <>{children}</>;
+}
+
+// ── React error boundary (fatal render crashes) ──────────────────────────────
 
 interface Props {
   children: ReactNode;

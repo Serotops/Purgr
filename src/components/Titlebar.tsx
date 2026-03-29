@@ -1,10 +1,14 @@
 import { useState, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Shield } from "lucide-react";
+import { Shield, Settings } from "lucide-react";
 
 const appWindow = getCurrentWindow();
 
-export function Titlebar() {
+interface TitlebarProps {
+  onSettingsClick?: () => void;
+}
+
+export function Titlebar({ onSettingsClick }: TitlebarProps) {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -24,7 +28,7 @@ export function Titlebar() {
 
   return (
     <div
-      className="flex-shrink-0 flex items-center h-8 bg-[#1e1e2a] select-none"
+      className="flex-shrink-0 flex items-center h-8 bg-[var(--titlebar-bg,#1e1e2a)] select-none"
       data-tauri-drag-region
     >
       {/* App icon + title */}
@@ -32,16 +36,24 @@ export function Titlebar() {
         <div className="w-4 h-4 rounded-sm bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
           <Shield className="w-2.5 h-2.5 text-white" />
         </div>
-        <span className="text-[11px] font-medium text-white/50">Purgr</span>
+        <span className="text-[11px] font-medium text-[var(--titlebar-fg,rgba(255,255,255,0.5))]">Purgr</span>
       </div>
 
       {/* Spacer — draggable */}
       <div className="flex-1" data-tauri-drag-region />
 
+      {/* Settings */}
+      <button
+        className="h-full w-9 flex items-center justify-center text-[var(--titlebar-fg,rgba(255,255,255,0.4))] hover:text-[var(--titlebar-fg-hover,rgba(255,255,255,0.8))] hover:bg-[var(--titlebar-hover,rgba(255,255,255,0.05))] transition-colors duration-150"
+        onClick={onSettingsClick}
+      >
+        <Settings className="w-3.5 h-3.5" />
+      </button>
+
       {/* Window controls */}
       <div className="flex items-center h-full">
         <button
-          className="h-full w-11 flex items-center justify-center text-white/40 hover:text-white/80 hover:bg-white/5 transition-colors duration-150"
+          className="h-full w-11 flex items-center justify-center text-[var(--titlebar-fg,rgba(255,255,255,0.4))] hover:text-[var(--titlebar-fg-hover,rgba(255,255,255,0.8))] hover:bg-[var(--titlebar-hover,rgba(255,255,255,0.05))] transition-colors duration-150"
           onClick={() => appWindow.minimize()}
         >
           <svg width="10" height="1" viewBox="0 0 10 1" fill="currentColor">
@@ -49,7 +61,7 @@ export function Titlebar() {
           </svg>
         </button>
         <button
-          className="h-full w-11 flex items-center justify-center text-white/40 hover:text-white/80 hover:bg-white/5 transition-colors duration-150"
+          className="h-full w-11 flex items-center justify-center text-[var(--titlebar-fg,rgba(255,255,255,0.4))] hover:text-[var(--titlebar-fg-hover,rgba(255,255,255,0.8))] hover:bg-[var(--titlebar-hover,rgba(255,255,255,0.05))] transition-colors duration-150"
           onClick={() => appWindow.toggleMaximize()}
         >
           {maximized ? (
@@ -63,7 +75,7 @@ export function Titlebar() {
           )}
         </button>
         <button
-          className="h-full w-11 flex items-center justify-center text-white/40 hover:text-white hover:bg-red-500 transition-colors duration-150"
+          className="h-full w-11 flex items-center justify-center text-[var(--titlebar-fg,rgba(255,255,255,0.4))] hover:text-[var(--titlebar-fg-hover,rgba(255,255,255,0.8))] hover:bg-red-500 hover:!text-white transition-colors duration-150"
           onClick={() => appWindow.close()}
         >
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2">

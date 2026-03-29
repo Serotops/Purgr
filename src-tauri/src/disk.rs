@@ -858,8 +858,6 @@ fn build_mft_node(
     let mut total_size = 0u64;
     let mut total_files = 0u64;
     let mut total_dirs = 0u64;
-    let mut files_size = 0u64;
-    let mut files_count = 0u64;
 
     if let Some(child_ids) = children_map.get(&record) {
         for &child_id in child_ids {
@@ -877,7 +875,6 @@ fn build_mft_node(
                             max_child_depth - 1,
                         )
                     } else {
-                        // Just aggregate size without building deep tree
                         let (sz, fc, dc) = aggregate_mft_size(child_id, entries, children_map);
                         DirEntry {
                             name: child_entry.name.clone(),
@@ -894,27 +891,23 @@ fn build_mft_node(
                     total_dirs += child_node.dir_count + 1;
                     children.push(child_node);
                 } else {
-                    files_size += child_entry.size;
-                    files_count += 1;
+                    // Add individual file entries
+                    let file_path = format!("{}\\{}", current_path, child_entry.name);
+                    total_size += child_entry.size;
+                    total_files += 1;
+                    children.push(DirEntry {
+                        name: child_entry.name.clone(),
+                        path: file_path,
+                        size: child_entry.size,
+                        is_dir: false,
+                        children: Vec::new(),
+                        file_count: 1,
+                        dir_count: 0,
+                    });
                 }
             }
         }
     }
-
-    if files_size > 0 {
-        children.push(DirEntry {
-            name: format!("<files> ({} files)", files_count),
-            path: current_path.clone(),
-            size: files_size,
-            is_dir: false,
-            children: Vec::new(),
-            file_count: files_count,
-            dir_count: 0,
-        });
-    }
-
-    total_size += files_size;
-    total_files += files_count;
 
     children.sort_by(|a, b| b.size.cmp(&a.size));
 

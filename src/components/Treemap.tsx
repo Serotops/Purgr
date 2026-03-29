@@ -319,7 +319,7 @@ export function Treemap({ entry, onDrillDown, onContextMenu, height = 400 }: Tre
           el.style.zIndex = "100";
         }
 
-        let html = `<p style="font-weight:600;font-size:13px;margin:0 0 2px">${esc(node.entry.name)}</p>`;
+        let html = `<p style="font-weight:600;font-size:13px;margin:0 0 2px;color:#e4e4e7">${esc(node.entry.name)}</p>`;
         html += `<p style="font-size:12px;color:#a1a1aa;margin:0">${formatBytes(node.entry.size)}</p>`;
         if (node.entry.is_dir) {
           html += `<p style="font-size:11px;color:#a1a1aa;margin:0">${node.entry.file_count.toLocaleString()} files, ${node.entry.dir_count.toLocaleString()} folders</p>`;

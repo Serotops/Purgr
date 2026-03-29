@@ -1,4 +1,6 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { List } from "react-window";
+import AutoSizer from "./components/AutoSizer";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toolbar } from "@/components/Toolbar";
 import { SortHeader } from "@/components/SortHeader";
@@ -7,6 +9,7 @@ import { DiskAnalysis } from "@/components/DiskAnalysis";
 import { ToastContainer, showToast } from "@/components/Toast";
 import { useApps } from "@/hooks/useApps";
 import { Titlebar } from "@/components/Titlebar";
+import { SettingsDialog, useTheme } from "@/components/Settings";
 import {
   Dialog,
   DialogContent,
@@ -21,6 +24,31 @@ import type { SortField } from "@/types";
 
 type Tab = "apps" | "disk";
 
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function VirtualRow(props: any) {
+  const { index, style, apps, activeActions, onUninstall, onRemoveEntry, onDismiss, onRecheck, selectedIdx, searchQuery, maxSize, expandedKeys, toggleExpand } = props;
+  const app = apps[index];
+  if (!app) return null;
+  return (
+    <div style={{ ...style, padding: "2px 12px" }}>
+      <AppRow
+        app={app}
+        action={activeActions.get(app.registry_key)}
+        onUninstall={onUninstall}
+        onRemoveEntry={onRemoveEntry}
+        onDismiss={onDismiss}
+        onRecheck={onRecheck}
+        selected={selectedIdx === index}
+        searchQuery={searchQuery}
+        maxSize={maxSize}
+        expanded={expandedKeys.has(app.registry_key)}
+        onToggleExpand={() => toggleExpand(app.registry_key)}
+      />
+    </div>
+  );
+}
+
 function formatSizeKb(kb: number): string {
   if (kb === 0) return "0 KB";
   if (kb < 1024) return `${kb} KB`;
@@ -34,7 +62,9 @@ function App() {
   const [activeTab, setActiveTab] = useState<Tab>("apps");
   const [bulkConfirm, setBulkConfirm] = useState(false);
   const [selectedIdx, setSelectedIdx] = useState(-1);
-  const listRef = useRef<HTMLDivElement>(null);
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const { theme, setTheme } = useTheme();
 
   const {
     apps,
@@ -105,6 +135,27 @@ function App() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  const toggleExpand = useCallback((key: string) => {
+    setExpandedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const ROW_HEIGHT = 52;
+  const EXPANDED_HEIGHT = 180;
+
+  const getRowHeight = useCallback(
+    (index: number) => {
+      const app = apps[index];
+      if (!app) return ROW_HEIGHT;
+      return expandedKeys.has(app.registry_key) ? EXPANDED_HEIGHT : ROW_HEIGHT;
+    },
+    [apps, expandedKeys]
+  );
+
   const handleBulkRemove = async () => {
     setBulkConfirm(false);
     await bulkRemoveOrphans();
@@ -116,7 +167,7 @@ function App() {
   return (
     <TooltipProvider delayDuration={200}>
       <div className="h-screen flex flex-col bg-background" onKeyDown={handleKeyDown} tabIndex={-1}>
-        <Titlebar />
+        <Titlebar onSettingsClick={() => setSettingsOpen(true)} />
 
         {/* Header */}
         <header className="flex-shrink-0 border-b bg-card/80 backdrop-blur-sm">
@@ -192,46 +243,52 @@ function App() {
               </div>
             )}
 
-            <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto">
-              <div className="px-3 py-2 space-y-1">
-                {loading && apps.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-                    <Loader2 className="w-7 h-7 animate-spin mb-3 text-primary" />
-                    <p className="text-sm">Scanning Windows registry...</p>
-                    <p className="text-xs mt-1 text-muted-foreground/60">This may take a few seconds</p>
-                  </div>
-                ) : error ? (
-                  <div className="flex flex-col items-center justify-center py-16">
-                    <div className="text-destructive text-sm mb-3">{error}</div>
-                    <Button variant="outline" size="sm" onClick={scan}>Retry</Button>
-                  </div>
-                ) : apps.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-                    <PackageX className="w-10 h-10 mb-3 opacity-30" />
-                    <p className="text-sm">
-                      {search || filterStatus !== "all"
-                        ? "No apps match your filters"
-                        : "No apps found"}
-                    </p>
-                  </div>
-                ) : (
-                  apps.map((app, i) => (
-                    <AppRow
-                      key={app.registry_key}
-                      app={app}
-                      action={activeActions.get(app.registry_key)}
-                      onUninstall={uninstallApp}
-                      onRemoveEntry={removeRegistryEntry}
-                      onDismiss={dismissAction}
-                      onRecheck={recheckApp}
-                      selected={selectedIdx === i}
-                      searchQuery={search}
-                      maxSize={stats.totalSizeKb}
-                    />
-                  ))
-                )}
+            {loading && apps.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
+                <Loader2 className="w-7 h-7 animate-spin mb-3 text-primary" />
+                <p className="text-sm">Scanning Windows registry...</p>
+                <p className="text-xs mt-1 text-muted-foreground/60">This may take a few seconds</p>
               </div>
-            </div>
+            ) : error ? (
+              <div className="flex-1 flex flex-col items-center justify-center">
+                <div className="text-destructive text-sm mb-3">{error}</div>
+                <Button variant="outline" size="sm" onClick={scan}>Retry</Button>
+              </div>
+            ) : apps.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
+                <PackageX className="w-10 h-10 mb-3 opacity-30" />
+                <p className="text-sm">
+                  {search || filterStatus !== "all"
+                    ? "No apps match your filters"
+                    : "No apps found"}
+                </p>
+              </div>
+            ) : (
+              <AutoSizer className="flex-1 min-h-0">
+                {({ width, height }) => (
+                  <List
+                    style={{ width, height }}
+                    rowCount={apps.length}
+                    rowHeight={getRowHeight}
+                    overscanCount={5}
+                    rowComponent={VirtualRow}
+                    rowProps={{
+                      apps,
+                      activeActions,
+                      onUninstall: uninstallApp,
+                      onRemoveEntry: removeRegistryEntry,
+                      onDismiss: dismissAction,
+                      onRecheck: recheckApp,
+                      selectedIdx,
+                      searchQuery: search,
+                      maxSize: stats.totalSizeKb,
+                      expandedKeys,
+                      toggleExpand,
+                    }}
+                  />
+                )}
+              </AutoSizer>
+            )}
           </>
         ) : (
           <DiskAnalysis />
@@ -268,6 +325,12 @@ function App() {
           </DialogContent>
         </Dialog>
 
+        <SettingsDialog
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          theme={theme}
+          onThemeChange={setTheme}
+        />
         <ToastContainer />
       </div>
     </TooltipProvider>

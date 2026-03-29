@@ -63,10 +63,15 @@ interface AppRowProps {
   selected?: boolean;
   searchQuery?: string;
   maxSize?: number;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
 }
 
-export function AppRow({ app, action, onUninstall, onRemoveEntry, onDismiss, onRecheck, selected, searchQuery = "", maxSize = 0 }: AppRowProps) {
-  const [expanded, setExpanded] = useState(false);
+export function AppRow({ app, action, onUninstall, onRemoveEntry, onDismiss, onRecheck, selected, searchQuery = "", maxSize = 0, expanded: expandedProp, onToggleExpand }: AppRowProps) {
+  // Support both controlled (from parent) and uncontrolled (internal) expand state
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const expanded = expandedProp ?? internalExpanded;
+  const toggleExpand = onToggleExpand ?? (() => setInternalExpanded((v) => !v));
   const [confirmDialog, setConfirmDialog] = useState<"uninstall" | "remove" | null>(null);
 
   const isBusy = action?.status === "uninstalling" || action?.status === "verifying";
@@ -117,7 +122,7 @@ export function AppRow({ app, action, onUninstall, onRemoveEntry, onDismiss, onR
         {/* Main row */}
         <div
           className="flex items-center gap-3 px-3 py-2.5 cursor-pointer select-none"
-          onClick={() => !isBusy && setExpanded(!expanded)}
+          onClick={() => !isBusy && toggleExpand()}
         >
           {/* Icon / Status indicator */}
           <div className={`flex-shrink-0 w-8 h-8 rounded-md flex items-center justify-center transition-colors duration-200 ${
