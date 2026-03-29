@@ -38,15 +38,32 @@ function formatSize(kb: number): string {
   return `${gb.toFixed(2)} GB`;
 }
 
+// Highlight matching text in search results
+function HighlightText({ text, query }: { text: string; query: string }) {
+  if (!query || query.length < 2) return <>{text}</>;
+  const idx = text.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <span className="bg-primary/20 text-primary rounded-sm px-0.5">{text.slice(idx, idx + query.length)}</span>
+      {text.slice(idx + query.length)}
+    </>
+  );
+}
+
 interface AppRowProps {
   app: InstalledApp;
   action: AppAction | undefined;
   onUninstall: (app: InstalledApp) => void;
   onRemoveEntry: (app: InstalledApp) => void;
   onDismiss: (registryKey: string) => void;
+  selected?: boolean;
+  searchQuery?: string;
+  maxSize?: number;
 }
 
-export function AppRow({ app, action, onUninstall, onRemoveEntry, onDismiss }: AppRowProps) {
+export function AppRow({ app, action, onUninstall, onRemoveEntry, onDismiss, selected, searchQuery = "", maxSize = 0 }: AppRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<"uninstall" | "remove" | null>(null);
 
@@ -64,7 +81,7 @@ export function AppRow({ app, action, onUninstall, onRemoveEntry, onDismiss }: A
   return (
     <>
       <div
-        className={`group rounded-lg transition-all duration-200 ${
+        className={`group rounded-lg transition-all duration-200 relative overflow-hidden ${
           isBusy
             ? "bg-yellow-500/5 ring-1 ring-yellow-500/20"
             : action?.status === "done"
@@ -73,9 +90,26 @@ export function AppRow({ app, action, onUninstall, onRemoveEntry, onDismiss }: A
             ? "bg-destructive/5 ring-1 ring-destructive/30"
             : app.is_orphan
             ? "bg-destructive/5 ring-1 ring-destructive/20"
+            : selected
+            ? "bg-primary/10 ring-1 ring-primary/30"
             : "hover:bg-muted/40"
         }`}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          if (app.uninstall_string && !app.is_orphan) {
+            setConfirmDialog("uninstall");
+          } else if (app.is_orphan) {
+            setConfirmDialog("remove");
+          }
+        }}
       >
+        {/* Size bar background */}
+        {!action && maxSize > 0 && app.estimated_size_kb > 0 && (
+          <div
+            className="absolute inset-y-0 left-0 bg-primary/[0.04] pointer-events-none"
+            style={{ width: `${Math.min((app.estimated_size_kb / maxSize) * 100, 100)}%` }}
+          />
+        )}
         {/* Main row */}
         <div
           className="flex items-center gap-3 px-3 py-2.5 cursor-pointer select-none"
@@ -109,7 +143,9 @@ export function AppRow({ app, action, onUninstall, onRemoveEntry, onDismiss }: A
           {/* Name + publisher / action status */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <span className="font-medium text-sm truncate">{app.name}</span>
+              <span className="font-medium text-sm truncate">
+                <HighlightText text={app.name} query={searchQuery} />
+              </span>
               {app.is_orphan && !action && (
                 <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-4">
                   Orphan
@@ -138,7 +174,9 @@ export function AppRow({ app, action, onUninstall, onRemoveEntry, onDismiss }: A
                 {action.message}
               </p>
             ) : app.publisher ? (
-              <p className="text-xs text-muted-foreground truncate">{app.publisher}</p>
+              <p className="text-xs text-muted-foreground truncate">
+                <HighlightText text={app.publisher} query={searchQuery} />
+              </p>
             ) : null}
           </div>
 

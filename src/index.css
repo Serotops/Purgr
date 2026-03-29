@@ -136,6 +136,15 @@
     outline-offset: 2px;
   }
 
+  /* Toast animation */
+  @keyframes slide-in-right {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  .toast-animate-in {
+    animation: slide-in-right 0.3s ease-out;
+  }
+
   /* Window border — use outline to avoid adding to layout */
   html {
     outline: 1px solid oklch(0.32 0.005 270);

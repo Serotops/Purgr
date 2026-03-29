@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { DriveInfo, DirEntry } from "@/types";
@@ -15,23 +15,30 @@ export function useDiskScan() {
   const [progress, setProgress] = useState(0);
   const [progressMsg, setProgressMsg] = useState("");
 
-  // Listen for progressive scan events
+  // Track which drive is expected — ignore events from stale scans
+  const expectedDriveRef = useRef<string | null>(null);
+
   useEffect(() => {
     const unlistenShallow = listen<DirEntry>("scan-shallow", (event) => {
+      // Check if this result matches the drive we're currently waiting for
+      const rootName = event.payload.name;
+      if (expectedDriveRef.current && !rootName.startsWith(expectedDriveRef.current)) return;
       setScanPhase("deep");
-      setCurrentEntry(event.payload);
-      setBreadcrumb([event.payload]);
     });
 
     const unlistenProgress = listen<{ percent: number; message: string }>(
       "scan-progress",
       (event) => {
+        // Progress events don't carry drive info, but if we've switched drives
+        // the state was already reset, so stale progress just gets overwritten
         setProgress(event.payload.percent);
         setProgressMsg(event.payload.message);
       }
     );
 
     const unlistenComplete = listen<DirEntry>("scan-complete", (event) => {
+      const rootName = event.payload.name;
+      if (expectedDriveRef.current && !rootName.startsWith(expectedDriveRef.current)) return;
       setScanPhase("idle");
       setScanning(false);
       setProgress(100);
@@ -59,6 +66,9 @@ export function useDiskScan() {
   }, []);
 
   const scanDrive = useCallback(async (driveLetter: string) => {
+    // Set expected drive so event listeners ignore results from previous scans
+    expectedDriveRef.current = driveLetter;
+
     setScanning(true);
     setScanPhase("shallow");
     setError(null);
@@ -69,12 +79,14 @@ export function useDiskScan() {
     setProgressMsg("");
 
     try {
-      // This triggers the progressive scan — results come via events
       await invoke("scan_drive_progressive", { driveLetter });
     } catch (e) {
-      setError(String(e));
-      setScanning(false);
-      setScanPhase("idle");
+      // Only show error if this drive is still selected
+      if (expectedDriveRef.current === driveLetter) {
+        setError(String(e));
+        setScanning(false);
+        setScanPhase("idle");
+      }
     }
   }, []);
 
@@ -83,15 +95,13 @@ export function useDiskScan() {
 
     const addToBreadcrumb = (e: DirEntry) => {
       setBreadcrumb((prev) => {
-        // If already the last entry, don't duplicate
         const last = prev[prev.length - 1];
         if (last && last.path === e.path) return prev;
 
-        // If this path exists deeper in the breadcrumb, trim back to it
         const existingIdx = prev.findIndex((b) => b.path === e.path);
         if (existingIdx >= 0) {
           const trimmed = prev.slice(0, existingIdx + 1);
-          trimmed[existingIdx] = e; // use the fresh entry data
+          trimmed[existingIdx] = e;
           return trimmed;
         }
 
@@ -100,7 +110,6 @@ export function useDiskScan() {
       setCurrentEntry(e);
     };
 
-    // If entry already has children with their own children, just navigate
     const hasDeepChildren = entry.children.some(
       (c) => c.is_dir && c.children.length > 0
     );
@@ -109,7 +118,6 @@ export function useDiskScan() {
       return;
     }
 
-    // Otherwise scan deeper
     setScanning(true);
     try {
       const result = await invoke<DirEntry>("scan_directory", {
@@ -124,18 +132,14 @@ export function useDiskScan() {
     }
   }, []);
 
-  const navigateTo = useCallback(
-    (index: number) => {
-      setBreadcrumb((prev) => {
-        const next = prev.slice(0, index + 1);
-        setCurrentEntry(next[next.length - 1] || null);
-        return next;
-      });
-    },
-    []
-  );
+  const navigateTo = useCallback((index: number) => {
+    setBreadcrumb((prev) => {
+      const next = prev.slice(0, index + 1);
+      setCurrentEntry(next[next.length - 1] || null);
+      return next;
+    });
+  }, []);
 
-  // Remove a deleted entry from the tree and propagate size reduction upward
   const removeEntry = useCallback((deletedPath: string, deletedSize: number) => {
     const removeFromTree = (node: DirEntry): DirEntry => {
       const hadDirectChild = node.children.some((c) => c.path === deletedPath);
@@ -147,7 +151,6 @@ export function useDiskScan() {
       if (hadDirectChild) {
         newSize -= deletedSize;
       } else {
-        // Propagate size reduction from deeper levels
         const oldChildTotal = node.children.reduce((s, c) => s + c.size, 0);
         const newChildTotal = newChildren.reduce((s, c) => s + c.size, 0);
         newSize -= oldChildTotal - newChildTotal;
@@ -164,7 +167,6 @@ export function useDiskScan() {
     });
   }, []);
 
-  // Rescan the current directory to get fresh data from disk
   const rescanCurrent = useCallback(async () => {
     const current = breadcrumb[breadcrumb.length - 1];
     if (!current?.path) return;

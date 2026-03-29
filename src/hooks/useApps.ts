@@ -60,27 +60,26 @@ export function useApps() {
       await invoke<string>("uninstall_app", { uninstallString: uninstallCmd });
 
       // Phase 2: Poll registry to verify removal
-      // Protocol-based uninstallers (Steam, Epic, etc.) are async — poll longer
-      setAction(key, { registryKey: key, status: "verifying", message: "Waiting for uninstall to complete..." });
+      setAction(key, { registryKey: key, status: "verifying", message: "Verifying removal..." });
 
-      const maxAttempts = isProtocol ? 30 : 8;
-      const interval = isProtocol ? 3000 : 2000;
+      // Poll quickly at first (1s), then slower. Max ~20s for regular, ~30s for protocol.
+      const intervals = isProtocol
+        ? [1000, 1500, 2000, 2000, 2000, 3000, 3000, 3000, 3000, 3000]
+        : [1000, 1500, 2000, 2000, 3000, 3000];
 
       let removed = false;
-      for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        await new Promise((r) => setTimeout(r, attempt === 0 ? 1500 : interval));
+      for (let attempt = 0; attempt < intervals.length; attempt++) {
+        await new Promise((r) => setTimeout(r, intervals[attempt]));
         const stillExists = await invoke<boolean>("check_app_installed", { registryKey: key });
         if (!stillExists) {
           removed = true;
           break;
         }
-        if (isProtocol) {
-          setAction(key, {
-            registryKey: key,
-            status: "verifying",
-            message: `Waiting for external uninstaller... (${attempt + 1}/${maxAttempts})`,
-          });
-        }
+        setAction(key, {
+          registryKey: key,
+          status: "verifying",
+          message: `Verifying removal... (${attempt + 1}/${intervals.length})`,
+        });
       }
 
       if (removed) {
@@ -214,8 +213,10 @@ export function useApps() {
     const total = apps.length;
     const orphans = apps.filter((a) => a.is_orphan).length;
     const installed = total - orphans;
-    return { total, orphans, installed };
-  }, [apps]);
+    const totalSizeKb = apps.reduce((s, a) => s + a.estimated_size_kb, 0);
+    const filteredCount = filteredApps.length;
+    return { total, orphans, installed, totalSizeKb, filteredCount };
+  }, [apps, filteredApps]);
 
   return {
     apps: filteredApps,
