@@ -1,6 +1,12 @@
-# Purgr
+
+<img width="851" height="315" alt="1" src="https://github.com/user-attachments/assets/4c5d7c88-2af8-43dc-a4c0-75d7099ba212" />
 
 A modern, fast alternative to the Windows "Add or Remove Programs" panel. Built with Tauri, React, and Rust.
+
+<img width="1095" height="713" alt="Capture d&#39;écran 2026-03-29 213426" src="https://github.com/user-attachments/assets/93c920f4-f0bc-4e6c-b97e-8569e74ae89f" />
+<img width="1096" height="716" alt="Capture d&#39;écran 2026-03-29 213554" src="https://github.com/user-attachments/assets/bf79d9a6-4468-404c-a81b-edc3040d3322" />
+
+
 
 ## Why Purgr?
 
